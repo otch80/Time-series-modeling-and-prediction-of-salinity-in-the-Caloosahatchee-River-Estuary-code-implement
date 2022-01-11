@@ -14,7 +14,7 @@ class TSMS:
         self.salt = label  # 염분
         self.salt_occean = 35  # psu
 
-        self.inflow_col = ['inflow 칼럼명']
+        self.inflow_col = ['inflow']
         avg = self.data.zscore.mean()
         self.upper_thresholds = avg + threshold
         self.lower_thresholds = avg - threshold
