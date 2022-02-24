@@ -2,6 +2,7 @@ from tqdm import tqdm
 import pandas as pd
 import numpy as np
 import math
+import random
 import scipy.stats as ss
 
 
@@ -10,9 +11,7 @@ class TSMS:
 #     def __init__(self):
 
     def train(self, train_x, train_y, learning_rate, threshold, num_epoch, valid=True, verbose = True, window=7):
-        
         self.valid = valid
-        
         if (self.valid):
             split_rate = 0.9
             
@@ -80,19 +79,20 @@ class TSMS:
     def Gradient_Descent(self, num_epoch, verbose=True):
         
         self.train_pred = [0] * self.train_x.shape[0] # 예측값
-        self.train_error_log = []
+        self.error_log = []
 
-        self.train_Sq = [0] * len(self.train_y)                          # 각 t시점마다의 inflow에 의한 염분 변화량을 미리 계산
-        self.train_Sr = [0] * len(self.train_y)                          # 각 t시점마다의 rainfall에 의한 염분 변화량을 미리 계산
+        self.train_Sq = [0] * len(train_y)                          # 각 t시점마다의 inflow에 의한 염분 변화량을 미리 계산
+        self.train_Sr = [0] * len(train_y)                          # 각 t시점마다의 rainfall에 의한 염분 변화량을 미리 계산
         self.train_Sh = self.calc_elevation(self.train_elevation)   # 각 t시점마다의 elevation에 의한 염분 변화량을 미리 계산
 
         train_inflow_MA_term = self.train_inflow_MA.max() - self.train_inflow_MA.min()
 
         state = 0
+        square_error = 0
+        absolute_error = 0
 
         self.alpha = [0 for _ in range(3)] # Model-parameter
         self.beta = [1 for _ in range(3)] # Model-parameter
-        print(f"Init \t: alpha - {self.alpha},\t beta - {self.beta}")
 
         for epoch in range(num_epoch):
             loss = 0
@@ -109,7 +109,7 @@ class TSMS:
                 # Model Formulation
                 if (self.train_inflow_threshold[time] >= self.upper_thresholds): # overflow
                     state = 0
-                    self.train_pred[time] = self.alpha[0] + self.beta[0] * self.train_y[time - 1]
+                    self.train_pred[time] = self.alpha[0] + self.beta[0] * self.train_y[time - 1] + self.train_Sh[time]
                 elif (self.train_inflow_threshold[time] <= self.lower_thresholds): # underflow
                     state = 2
                     self.train_pred[time] = self.alpha[2] + self.beta[2] * self.train_y[time - 1] + (self.train_Sr[time] + self.train_Sh[time])
@@ -127,7 +127,7 @@ class TSMS:
                 elif (state == 2):
                     bias_gradient[state] += 2 * ((self.train_pred[time] - self.train_y[time]) - (self.train_Sq[time] + self.train_Sr[time] + self.train_Sh[time]))
                 else:
-                    bias_gradient[state] += 2 * (self.train_pred[time] - self.train_y[time])
+                    bias_gradient[state] += 2 * (self.train_pred[time] - self.train_y[time]) - self.train_Sh[time]
 
             # Weight update
             self.beta[0] -= self.learning_rate * (weight_gradient[0] / len(self.train_y)) # 평균 기울기
@@ -141,7 +141,7 @@ class TSMS:
 
             # MSE
             mse = loss / self.train_y.shape[0]
-            self.train_error_log.append(mse)
+            self.error_log.append(mse)
             
             # valid
             if (self.valid):
@@ -154,7 +154,7 @@ class TSMS:
             if (verbose):
                 print(f"Eppch - {epoch+1} \t: alpha - {self.alpha},\t beta - {self.beta},\t MSE - {mse}")
 
-        print(f">>> learning finished")
+        print(f">>> learning finished : alpha - {self.alpha},\t beta - {self.beta}, \t MSE - {mse}")
 
     def predict(self, test_x, window=7):
         
@@ -179,7 +179,7 @@ class TSMS:
             before_inflow_MA = 0 if np.isnan(self.test_inflow_MA[time-1]) else self.test_inflow_MA[time-1]
             self.test_Sq[time] = self.calc_inflow(self.test_inflow[time], now_inflow_MA, before_inflow_MA, self.pred[time-1], test_inflow_MA_term)
             self.test_Sr[time] = self.calc_rainfall(self.test_rainfall_MA[time], self.test_rainfall_MA[time-1], self.pred[time-1])
-            
+            # Model Formulation (수정 후)
             if (self.test_zscore[time] >= self.upper_thresholds):
                 self.pred[time] = (self.alpha[0] + self.beta[0] * self.pred[time - 1])
             elif (self.test_zscore[time] <= self.lower_thresholds):
@@ -209,6 +209,14 @@ class TSMS:
         # delta_Q = self.delta_inflow_MA(now_inflow_MA, before_inflow_MA) 
         delta = delta_Q * (salt_by_freshwater_at_T - before_pred)
         return delta
+
+    # def delta_inflow_MA(self, now_MA, before_MA):
+    #     now = 0 if np.isnan(now_MA) else now_MA
+    #     before = 0 if np.isnan(before_MA) else before_MA
+
+    #     return np.tanh(now - before) # MA 차이가 1 이상인 경우 예측값이 발산하는 문제 발생, 음수값을 살리기 위한 tanh 사용
+
+
 
     # 3. t 시점에서 water level에 의한 염분 변화량 계산
     def calc_elevation(self, elevation):
